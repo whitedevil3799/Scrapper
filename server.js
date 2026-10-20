@@ -1,55 +1,119 @@
 const express = require('express');
 const cors = require('cors');
-const { HiAnime } = require('aniwatch'); // Naya package
+const axios = require('axios');
+const cheerio = require('cheerio');
 
 const app = express();
 app.use(cors());
 app.use(express.json());
 
 const PORT = process.env.PORT || 3000;
-const scraper = new HiAnime.Scraper();
 
-// Route: Search for anime
+// 1. AniList se search (Information ke liye)
 app.get('/api/search', async (req, res) => {
     const query = req.query.q;
     if (!query) return res.status(400).json({ error: 'Query required' });
 
     try {
-        // Yeh package automatically search karke data le aayega
-        const data = await scraper.search(query);
-        
-        // Frontend ko wahi format mein bhej rahe hain jo usne expect kiya tha
-        const results = data.animes.map(anime => ({
-            title: anime.name,
-            link: anime.id, // Episode ID
-            image: anime.poster
+        const graphqlQuery = {
+            query: `
+            query ($search: String) {
+              Page(page: 1, perPage: 10) {
+                media(search: $search, type: ANIME) {
+                  id
+                  title { romaji english }
+                  coverImage { large }
+                  description
+                  episodes
+                }
+              }
+            }`,
+            variables: { search: query }
+        };
+
+        const response = await axios.post('https://graphql.anilist.co', graphqlQuery);
+        const animes = response.data.data.Page.media;
+
+        const results = animes.map(anime => ({
+            id: anime.id,
+            title: anime.title.romaji || anime.title.english,
+            image: anime.coverImage.large,
+            description: anime.description,
+            totalEpisodes: anime.episodes
         }));
 
         res.json(results);
     } catch (error) {
-        console.error('Search Error:', error.message);
-        res.status(500).json({ error: 'Failed to search anime' });
+        console.error('AniList Search Error:', error.message);
+        res.status(500).json({ error: 'Failed to search from AniList' });
     }
 });
 
-// Route: Get streaming source (Abhi ke liye placeholder)
-app.get('/api/stream', async (req, res) => {
-    const episodeId = req.query.url;
-    if (!episodeId) return res.status(400).json({ error: 'ID required' });
+// 2. hianimes.se se video link nikaalna (Proxy ke through)
+app.get('/api/video', async (req, res) => {
+    const { title, episode } = req.query;
+    if (!title) return res.status(400).json({ error: 'Title required' });
 
     try {
-        // Yeh package episode ke servers aur links nikaal sakta hai
-        const data = await scraper.getEpisodeSources(episodeId);
+        // Step 1: hianimes.se par search karo (ya direct URL banao)
+        // Yahan hum maan rahe hain ki aapke paas search ka URL structure hai
+        // Aapko is URL ko update karna padega agar site ka search structure alag hai
+        const searchUrl = `https://hianimes.se/search?q=${encodeURIComponent(title)}`;
         
-        // Agar direct link mil jaye toh frontend ko bhej do
-        if (data && data.sources && data.sources.length > 0) {
-            res.json({ source: data.sources[0].url, type: data.sources[0].isM3U8 ? 'application/x-mpegURL' : 'video/mp4' });
+        // Note: hianimes.se Cloudflare use kar sakta hai, isliye axios fail ho sakta hai
+        // Agar fail ho, toh aapko ScraperAPI ya similar service use karni padegi
+        
+        const searchResponse = await axios.get(searchUrl, {
+            headers: {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+            }
+        });
+        
+        const $ = cheerio.load(searchResponse.data);
+        
+        // Search results se pehla anime link nikaalo (selectors change karne pad sakte hain)
+        let animeLink = $('.anime-card a').first().attr('href');
+        
+        if (!animeLink) {
+            return res.status(404).json({ error: 'Anime not found on hianimes.se' });
+        }
+
+        // Step 2: Episode page par jao
+        const episodeUrl = `https://hianimes.se${animeLink}-episode-${episode || 1}`;
+        
+        const episodeResponse = await axios.get(episodeUrl, {
+            headers: {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+            }
+        });
+        
+        const ep$ = cheerio.load(episodeResponse.data);
+        
+        // Video source nikaalne ki koshish karo
+        // Yeh selectors change karne pad sakte hain, kyunki site JavaScript use karti hai
+        let videoSource = ep$('video source').attr('src') || ep$('video').attr('src');
+        
+        // Agar direct video tag nahi mila, toh script tags mein dekho
+        if (!videoSource) {
+            const scripts = ep$('script').map((i, el) => ep$(el).html()).get();
+            for (const script of scripts) {
+                // .m3u8 link dhoondho
+                const m3u8Match = script.match(/https?:\/\/[^"']+\.m3u8[^"']*/);
+                if (m3u8Match) {
+                    videoSource = m3u8Match[0];
+                    break;
+                }
+            }
+        }
+        
+        if (videoSource) {
+            res.json({ source: videoSource, isM3U8: videoSource.includes('.m3u8') });
         } else {
-            res.status(404).json({ error: 'No stream source found' });
+            res.status(404).json({ error: 'No video source found. Website may use JS rendering.' });
         }
     } catch (error) {
-        console.error('Stream Error:', error.message);
-        res.status(500).json({ error: 'Failed to get stream source' });
+        console.error('Video Fetch Error:', error.message);
+        res.status(500).json({ error: 'Failed to get video source. Site may block scraping.' });
     }
 });
 
