@@ -9,8 +9,8 @@ app.use(express.json());
 
 const PORT = process.env.PORT || 3000;
 
-// YAHAN CHANGE KIYA HAI: Ab hum Aniwatch use kar rahe hain (hianime nahi)
-const aniwatch = new ANIME.Aniwatch();
+// YEH SAHI CLASS HAI: HiAnime() hi aniwatchtv.to ko scrape karta hai
+const hianime = new ANIME.HiAnime();
 
 // 1. AniList se Search
 app.get('/api/search', async (req, res) => {
@@ -48,14 +48,14 @@ app.get('/api/search', async (req, res) => {
     }
 });
 
-// 2. Video Link Scrape (Ab Aniwatch se)
+// 2. Video Link Scrape (HiAnime se, jo aniwatchtv.to hai)
 app.get('/api/video', async (req, res) => {
     const { title, episode } = req.query;
     if (!title) return res.status(400).json({ error: 'Title required' });
 
     try {
-        // Aniwatch par search karo
-        const searchResult = await aniwatch.search(title);
+        // Aniwatchtv.to par search
+        const searchResult = await hianime.search(title);
         
         if (!searchResult || !searchResult.animes || searchResult.animes.length === 0) {
             return res.status(404).json({ error: 'Anime not found on Aniwatch' });
@@ -64,8 +64,7 @@ app.get('/api/video', async (req, res) => {
         const animeId = searchResult.animes[0].id;
         const epNum = episode || 1;
 
-        // Episodes nikaalo
-        const episodes = await aniwatch.getEpisodes(animeId);
+        const episodes = await hianime.getEpisodes(animeId);
         
         if (!episodes || !episodes.episodes || episodes.episodes.length === 0) {
              return res.status(404).json({ error: 'Episodes not found' });
@@ -73,8 +72,7 @@ app.get('/api/video', async (req, res) => {
 
         const targetEp = episodes.episodes.find(e => e.number == epNum) || episodes.episodes[0];
 
-        // Source nikalo
-        const sources = await aniwatch.getEpisodeSources(targetEp.id, 'hd-1', 'sub');
+        const sources = await hianime.getEpisodeSources(targetEp.id, 'hd-1', 'sub');
         
         if (sources && sources.sources && sources.sources.length > 0) {
             res.json({ 
