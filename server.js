@@ -1,9 +1,7 @@
 const express = require('express');
 const cors = require('cors');
 const axios = require('axios');
-
-// Package ko require se import karo
-const { ANIME } = require('@genga-movie/aniwatch');
+import { ANIME } from '@genga-movie/aniwatch';
 
 const app = express();
 app.use(cors());
