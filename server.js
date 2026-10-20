@@ -9,10 +9,10 @@ app.use(express.json());
 
 const PORT = process.env.PORT || 3000;
 
-// 'HiAnime' (capital A) ka istemal karo
-const hianime = new ANIME.HiAnime();
+// YAHAN CHANGE KIYA HAI: Ab hum Aniwatch use kar rahe hain (hianime nahi)
+const aniwatch = new ANIME.Aniwatch();
 
-// 1. AniList se Search (Information ke liye)
+// 1. AniList se Search
 app.get('/api/search', async (req, res) => {
     const query = req.query.q;
     if (!query) return res.status(400).json({ error: 'Query required' });
@@ -44,27 +44,28 @@ app.get('/api/search', async (req, res) => {
 
         res.json(results);
     } catch (error) {
-        console.error("AniList Error:", error.message);
         res.status(500).json({ error: 'Failed to search' });
     }
 });
 
-// 2. Video Link Scrape karna
+// 2. Video Link Scrape (Ab Aniwatch se)
 app.get('/api/video', async (req, res) => {
     const { title, episode } = req.query;
     if (!title) return res.status(400).json({ error: 'Title required' });
 
     try {
-        const searchResult = await hianime.search(title);
+        // Aniwatch par search karo
+        const searchResult = await aniwatch.search(title);
         
         if (!searchResult || !searchResult.animes || searchResult.animes.length === 0) {
-            return res.status(404).json({ error: 'Anime not found on streaming site' });
+            return res.status(404).json({ error: 'Anime not found on Aniwatch' });
         }
 
         const animeId = searchResult.animes[0].id;
         const epNum = episode || 1;
 
-        const episodes = await hianime.getEpisodes(animeId);
+        // Episodes nikaalo
+        const episodes = await aniwatch.getEpisodes(animeId);
         
         if (!episodes || !episodes.episodes || episodes.episodes.length === 0) {
              return res.status(404).json({ error: 'Episodes not found' });
@@ -72,7 +73,8 @@ app.get('/api/video', async (req, res) => {
 
         const targetEp = episodes.episodes.find(e => e.number == epNum) || episodes.episodes[0];
 
-        const sources = await hianime.getEpisodeSources(targetEp.id, 'hd-1', 'sub');
+        // Source nikalo
+        const sources = await aniwatch.getEpisodeSources(targetEp.id, 'hd-1', 'sub');
         
         if (sources && sources.sources && sources.sources.length > 0) {
             res.json({ 
@@ -84,7 +86,7 @@ app.get('/api/video', async (req, res) => {
         }
     } catch (error) {
         console.error('Video Scrape Error:', error.message);
-        res.status(500).json({ error: 'Video scrape failed. Server issue.' });
+        res.status(500).json({ error: 'Video scrape failed. Aniwatch might be blocking.' });
     }
 });
 
