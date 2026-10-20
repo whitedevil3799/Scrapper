@@ -1,15 +1,16 @@
 const express = require('express');
 const cors = require('cors');
 const axios = require('axios');
-const cheerio = require('cheerio');
+const { ANIME } = require('@genga-movie/aniwatch');
 
 const app = express();
 app.use(cors());
 app.use(express.json());
 
 const PORT = process.env.PORT || 3000;
+const hianime = new ANIME.Hianime();
 
-// 1. AniList se search (Information ke liye)
+// 1. AniList se Search (Information ke liye)
 app.get('/api/search', async (req, res) => {
     const query = req.query.q;
     if (!query) return res.status(400).json({ error: 'Query required' });
@@ -18,12 +19,11 @@ app.get('/api/search', async (req, res) => {
         const graphqlQuery = {
             query: `
             query ($search: String) {
-              Page(page: 1, perPage: 10) {
+              Page(page: 1, perPage: 12) {
                 media(search: $search, type: ANIME) {
                   id
                   title { romaji english }
                   coverImage { large }
-                  description
                   episodes
                 }
               }
@@ -37,84 +37,55 @@ app.get('/api/search', async (req, res) => {
         const results = animes.map(anime => ({
             id: anime.id,
             title: anime.title.romaji || anime.title.english,
-            image: anime.coverImage.large,
-            description: anime.description,
-            totalEpisodes: anime.episodes
+            image: anime.coverImage.large
         }));
 
         res.json(results);
     } catch (error) {
-        console.error('AniList Search Error:', error.message);
-        res.status(500).json({ error: 'Failed to search from AniList' });
+        res.status(500).json({ error: 'Failed to search' });
     }
 });
 
-// 2. hianimes.se se video link nikaalna (Proxy ke through)
+// 2. Asli Video Link Scrape karna (Aniwatch package se)
 app.get('/api/video', async (req, res) => {
     const { title, episode } = req.query;
     if (!title) return res.status(400).json({ error: 'Title required' });
 
     try {
-        // Step 1: hianimes.se par search karo (ya direct URL banao)
-        // Yahan hum maan rahe hain ki aapke paas search ka URL structure hai
-        // Aapko is URL ko update karna padega agar site ka search structure alag hai
-        const searchUrl = `https://hianimes.se/search?q=${encodeURIComponent(title)}`;
+        // Aniwatch site par anime search karo
+        const searchResult = await hianime.search(title);
         
-        // Note: hianimes.se Cloudflare use kar sakta hai, isliye axios fail ho sakta hai
-        // Agar fail ho, toh aapko ScraperAPI ya similar service use karni padegi
-        
-        const searchResponse = await axios.get(searchUrl, {
-            headers: {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-            }
-        });
-        
-        const $ = cheerio.load(searchResponse.data);
-        
-        // Search results se pehla anime link nikaalo (selectors change karne pad sakte hain)
-        let animeLink = $('.anime-card a').first().attr('href');
-        
-        if (!animeLink) {
-            return res.status(404).json({ error: 'Anime not found on hianimes.se' });
+        if (!searchResult || !searchResult.animes || searchResult.animes.length === 0) {
+            return res.status(404).json({ error: 'Anime not found on streaming site' });
         }
 
-        // Step 2: Episode page par jao
-        const episodeUrl = `https://hianimes.se${animeLink}-episode-${episode || 1}`;
+        const animeId = searchResult.animes[0].id;
         
-        const episodeResponse = await axios.get(episodeUrl, {
-            headers: {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-            }
-        });
+        // Episode number default 1
+        const epNum = episode || 1;
+
+        // Episode ka ID nikaalo
+        const episodes = await hianime.getEpisodes(animeId);
+        const targetEp = episodes.episodes.find(e => e.number == epNum) || episodes.episodes[0];
+
+        if (!targetEp) return res.status(404).json({ error: 'Episode not found' });
+
+        // Video ke servers se .m3u8 link nikaalo
+        const sources = await hianime.getEpisodeSources(targetEp.id, 'hd-1', 'sub');
         
-        const ep$ = cheerio.load(episodeResponse.data);
-        
-        // Video source nikaalne ki koshish karo
-        // Yeh selectors change karne pad sakte hain, kyunki site JavaScript use karti hai
-        let videoSource = ep$('video source').attr('src') || ep$('video').attr('src');
-        
-        // Agar direct video tag nahi mila, toh script tags mein dekho
-        if (!videoSource) {
-            const scripts = ep$('script').map((i, el) => ep$(el).html()).get();
-            for (const script of scripts) {
-                // .m3u8 link dhoondho
-                const m3u8Match = script.match(/https?:\/\/[^"']+\.m3u8[^"']*/);
-                if (m3u8Match) {
-                    videoSource = m3u8Match[0];
-                    break;
-                }
-            }
-        }
-        
-        if (videoSource) {
-            res.json({ source: videoSource, isM3U8: videoSource.includes('.m3u8') });
+        if (sources && sources.sources && sources.sources.length > 0) {
+            // Jo pehla best quality link milega woh bhej denge
+            res.json({ 
+                source: sources.sources[0].url, 
+                type: 'hls' 
+            });
         } else {
-            res.status(404).json({ error: 'No video source found. Website may use JS rendering.' });
+            res.status(404).json({ error: 'Video link nahi mila' });
         }
     } catch (error) {
-        console.error('Video Fetch Error:', error.message);
-        res.status(500).json({ error: 'Failed to get video source. Site may block scraping.' });
+        console.error('Video Error:', error.message);
+        res.status(500).json({ error: 'Video scrape failed. Server issue.' });
     }
 });
 
-app.listen(PORT, () => console.log(`Backend running on port ${PORT}`));
+app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
