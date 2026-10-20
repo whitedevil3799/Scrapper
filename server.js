@@ -1,6 +1,6 @@
-const express = require('express');
-const cors = require('cors');
-const axios = require('axios');
+import express from 'express';
+import cors from 'cors';
+import axios from 'axios';
 import { ANIME } from '@genga-movie/aniwatch';
 
 const app = express();
@@ -9,7 +9,7 @@ app.use(express.json());
 
 const PORT = process.env.PORT || 3000;
 
-// 'HiAnime' (capital A) ka istemal karo, 'Hianime' nahi
+// 'HiAnime' (capital A) ka istemal karo
 const hianime = new ANIME.HiAnime();
 
 // 1. AniList se Search (Information ke liye)
