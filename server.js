@@ -1,18 +1,13 @@
-require('dotenv').config();
 const express = require('express');
-const axios = require('axios');
-const cheerio = require('cheerio');
 const cors = require('cors');
+const { HiAnime } = require('aniwatch'); // Naya package
 
 const app = express();
 app.use(cors());
 app.use(express.json());
 
 const PORT = process.env.PORT || 3000;
-const API_KEY = process.env.SCRAPER_API_KEY;
-
-// Helper function to build the ScraperAPI URL
-const buildScraperUrl = (url) => `http://api.scraperapi.com?api_key=${API_KEY}&url=${encodeURIComponent(url)}`;
+const scraper = new HiAnime.Scraper();
 
 // Route: Search for anime
 app.get('/api/search', async (req, res) => {
@@ -20,51 +15,42 @@ app.get('/api/search', async (req, res) => {
     if (!query) return res.status(400).json({ error: 'Query required' });
 
     try {
-        // NOTE: You will need to inspect the target site to get the exact URL and CSS selectors
-        const targetUrl = `https://hianimes.se/search?q=${encodeURIComponent(query)}`;
-        const response = await axios.get(buildScraperUrl(targetUrl));
-        const $ = cheerio.load(response.data);
-
-        const results = [];
-        // Placeholder selectors - you MUST change these based on the actual site's HTML
-        $('.anime-card').each((i, el) => {
-            const title = $(el).find('.title').text().trim(); 
-            const link = $(el).find('a').attr('href'); 
-            const image = $(el).find('img').attr('src'); 
-            if (title && link) {
-                results.push({ title, link, image });
-            }
-        });
+        // Yeh package automatically search karke data le aayega
+        const data = await scraper.search(query);
+        
+        // Frontend ko wahi format mein bhej rahe hain jo usne expect kiya tha
+        const results = data.animes.map(anime => ({
+            title: anime.name,
+            link: anime.id, // Episode ID
+            image: anime.poster
+        }));
 
         res.json(results);
     } catch (error) {
         console.error('Search Error:', error.message);
-        res.status(500).json({ error: 'Failed to scrape search results' });
+        res.status(500).json({ error: 'Failed to search anime' });
     }
 });
 
-// Route: Get streaming source for an episode
+// Route: Get streaming source (Abhi ke liye placeholder)
 app.get('/api/stream', async (req, res) => {
-    const episodeUrl = req.query.url;
-    if (!episodeUrl) return res.status(400).json({ error: 'URL required' });
+    const episodeId = req.query.url;
+    if (!episodeId) return res.status(400).json({ error: 'ID required' });
 
     try {
-        const response = await axios.get(buildScraperUrl(episodeUrl));
-        const $ = cheerio.load(response.data);
+        // Yeh package episode ke servers aur links nikaal sakta hai
+        const data = await scraper.getEpisodeSources(episodeId);
         
-        // Placeholder selector - you MUST change this based on the actual site
-        const videoSource = $('video source').attr('src') || $('video').attr('src');
-
-        if (videoSource) {
-            res.json({ source: videoSource, type: 'video/mp4' });
+        // Agar direct link mil jaye toh frontend ko bhej do
+        if (data && data.sources && data.sources.length > 0) {
+            res.json({ source: data.sources[0].url, type: data.sources[0].isM3U8 ? 'application/x-mpegURL' : 'video/mp4' });
         } else {
             res.status(404).json({ error: 'No stream source found' });
         }
     } catch (error) {
         console.error('Stream Error:', error.message);
-        res.status(500).json({ error: 'Failed to scrape stream source' });
+        res.status(500).json({ error: 'Failed to get stream source' });
     }
 });
 
 app.listen(PORT, () => console.log(`Backend running on port ${PORT}`));
-
